@@ -1,0 +1,188 @@
+# Builds the Windows and macOS apps and the browser extension on every push
+# and pull request. Pushing a tag like v0.2.0 also publishes a GitHub release
+# with all of them attached.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  version:
+    name: Check versions
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: v
+        name: app.go, wails.json and the extension manifest must agree (and match the tag)
+        run: |
+          app=$(sed -nE 's/^const Version = "([^"]+)"/\1/p' app.go)
+          wails=$(jq -r .info.productVersion wails.json)
+          ext=$(jq -r .version extension/chromium/manifest.json)
+          echo "app.go=$app wails.json=$wails manifest.json=$ext"
+          if [ "$app" != "$wails" ] || [ "$app" != "$ext" ]; then
+            echo "::error::Version mismatch: app.go=$app wails.json=$wails extension manifest=$ext"
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/v* ]] && [ "${GITHUB_REF_NAME#v}" != "$app" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $app"
+            exit 1
+          fi
+          echo "version=$app" >> "$GITHUB_OUTPUT"
+
+  app:
+    name: ${{ matrix.name }}
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows (amd64)
+            os: windows-latest
+            platform: windows/amd64
+          - name: macOS (universal)
+            os: macos-latest
+            platform: darwin/universal
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install the Wails CLI (same version as go.mod)
+        run: |
+          v=$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2)
+          go install "github.com/wailsapp/wails/v2/cmd/wails@$v"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) { choco install nsis -y --no-progress }
+          Add-Content $env:GITHUB_PATH "${env:ProgramFiles(x86)}\NSIS"
+
+      - name: Build
+        run: wails build -clean -trimpath -platform ${{ matrix.platform }} ${{ runner.os == 'Windows' && '-nsis' || '' }}
+
+      # After the build, because main.go embeds frontend/dist.
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./internal/...
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir -p dist/pkg/extension
+          cp build/bin/CrazyDownloadManager.exe dist/pkg/
+          cp -r extension/chromium dist/pkg/extension/
+          cp README.md LICENSE dist/pkg/
+          (cd dist/pkg && 7z a -tzip "../CrazyDownloadManager-$VERSION-windows-amd64.zip" . > /dev/null)
+          cp build/bin/CrazyDownloadManager-amd64-installer.exe "dist/CrazyDownloadManager-$VERSION-windows-amd64-setup.exe"
+          ls -l dist
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          app=build/bin/CrazyDownloadManager.app
+          lipo -info "$app/Contents/MacOS/CrazyDownloadManager"
+          mkdir -p dist/pkg/extension
+          ditto "$app" dist/pkg/CrazyDownloadManager.app
+          cp -r extension/chromium dist/pkg/extension/
+          cp README.md LICENSE dist/pkg/
+          ditto -c -k --keepParent dist/pkg "dist/CrazyDownloadManager-$VERSION-macos-universal.zip"
+          hdiutil create -volname "Crazy Download Manager" -srcfolder "$app" -ov -format UDZO \
+            "dist/CrazyDownloadManager-$VERSION-macos-universal.dmg"
+          ls -l dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: app-${{ runner.os }}
+          path: |
+            dist/*.zip
+            dist/*.exe
+            dist/*.dmg
+          if-no-files-found: error
+
+  extension:
+    name: Browser extension
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Check
+        working-directory: extension/chromium
+        run: |
+          jq empty manifest.json
+          for f in *.js; do node --check "$f"; done
+          # every file the manifest points at must exist
+          jq -r '[.background.service_worker, .action.default_popup, .options_ui.page,
+                  (.content_scripts[] | .js[], .css[]), (.icons[]), (.action.default_icon[])] | .[]' manifest.json |
+            while read -r f; do test -f "$f" || { echo "::error::manifest.json references missing $f"; exit 1; }; done
+      - name: Package
+        run: |
+          mkdir -p dist
+          # manifest.json must sit at the root of the zip for the Chrome Web Store.
+          (cd extension/chromium && zip -qr -X "../../dist/CrazyDownloadManager-$VERSION-extension-chromium.zip" .)
+          unzip -l dist/*.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: extension
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [version, app, extension]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: Crazy Download Manager ${{ needs.version.outputs.version }}
+          generate_release_notes: true
+          files: dist/*

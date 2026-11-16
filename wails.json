@@ -9,5 +9,12 @@
   "author": {
     "name": "Crazy Download Manager contributors",
     "email": ""
+  },
+  "info": {
+    "companyName": "Crazy Download Manager contributors",
+    "productName": "Crazy Download Manager",
+    "productVersion": "0.1.0",
+    "copyright": "MIT License",
+    "comments": "Open-source download accelerator"
   }
 }
