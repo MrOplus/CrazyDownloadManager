@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="ui.css" />
+</head>
+<body class="popup">
+  <header>
+    <img src="icons/32.png" alt="" width="22" height="22" />
+    <b>Crazy Download Manager</b>
+    <span id="status" class="dot"></span>
+  </header>
+  <div id="offline" class="note" hidden>The app is not reachable. Start Crazy Download Manager and check the token in <a href="#" id="opts1">options</a>.</div>
+  <label class="row"><input type="checkbox" id="enabled" /> Take over browser downloads</label>
+  <section>
+    <div class="title">Media on this page</div>
+    <div id="media" class="list"><div class="muted">Nothing detected yet. Start playing the video.</div></div>
+  </section>
+  <div class="actions">
+    <button id="all">Download all links…</button>
+    <button id="opts">Options</button>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
