@@ -114,11 +114,12 @@ jobs:
         run: |
           app=build/bin/CrazyDownloadManager.app
           lipo -info "$app/Contents/MacOS/CrazyDownloadManager"
-          mkdir -p dist/pkg/extension
-          ditto "$app" dist/pkg/CrazyDownloadManager.app
-          cp -r extension/chromium dist/pkg/extension/
-          cp README.md LICENSE dist/pkg/
-          ditto -c -k --keepParent dist/pkg "dist/CrazyDownloadManager-$VERSION-macos-universal.zip"
+          pkg="dist/CrazyDownloadManager-$VERSION-macos"   # top-level folder inside the zip
+          mkdir -p "$pkg/extension"
+          ditto "$app" "$pkg/CrazyDownloadManager.app"
+          cp -r extension/chromium "$pkg/extension/"
+          cp README.md LICENSE "$pkg/"
+          ditto -c -k --keepParent "$pkg" "dist/CrazyDownloadManager-$VERSION-macos-universal.zip"
           hdiutil create -volname "Crazy Download Manager" -srcfolder "$app" -ov -format UDZO \
             "dist/CrazyDownloadManager-$VERSION-macos-universal.dmg"
           ls -l dist
