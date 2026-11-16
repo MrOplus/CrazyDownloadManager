@@ -62,8 +62,8 @@ export function SchedulerDialog({ settings, downloads, queueOn, onClose, onSaved
               <div className="field-label">On these days (none = every day)</div>
               <div className="days">
                 {days.map((d, i) => {
-                  const on = q.schedule.days.includes(i);
-                  return <button key={d} className={`chip ${on ? 'on' : ''}`} onClick={() => upd(x => ({ ...x, schedule: { ...x.schedule, days: on ? x.schedule.days.filter(k => k !== i) : [...x.schedule.days, i].sort() } }))}>{d}</button>;
+                  const on = (q.schedule.days ?? []).includes(i);
+                  return <button key={d} className={`chip ${on ? 'on' : ''}`} onClick={() => upd(x => ({ ...x, schedule: { ...x.schedule, days: on ? (x.schedule.days ?? []).filter(k => k !== i) : [...(x.schedule.days ?? []), i].sort() } }))}>{d}</button>;
                 })}
               </div>
               <Field label="When the queue is done">

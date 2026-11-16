@@ -59,6 +59,7 @@ type Settings struct {
 	ShowAddDialog      bool            `json:"showAddDialog"`
 	ShowCompleteDialog bool            `json:"showCompleteDialog"`
 	ClipboardMonitor   bool            `json:"clipboardMonitor"`
+	CloseToTray        bool            `json:"closeToTray"` // closing the window keeps the app running in the tray / menu bar
 	BrowserIntercept   bool            `json:"browserIntercept"`
 	InterceptTypes     []string        `json:"interceptTypes"`
 	SkipSites          []string        `json:"skipSites"`
@@ -106,6 +107,7 @@ func Defaults() Settings {
 		ShowAddDialog:      true,
 		ShowCompleteDialog: true,
 		ClipboardMonitor:   false,
+		CloseToTray:        true, // Load unmarshals over Defaults, so old files without the key get this too
 		BrowserIntercept:   true,
 		InterceptTypes:     strings.Fields(`3gp 7z aac ace aif apk arj asf avi bin bz2 deb dmg exe flac flv gz gzip img iso lzh m4a m4v mkv mov mp3 mp4 mpeg mpg msi msu ogg ogv pdf pkg rar rpm sit tar tgz tif tiff wav webm wma wmv xz z zip zst`),
 		Theme:              "system",
@@ -183,7 +185,27 @@ func (st *Store) normalize() {
 		if s.Queues[i].MaxConcurrent <= 0 {
 			s.Queues[i].MaxConcurrent = 1
 		}
+		s.Queues[i].Schedule.Days = nonNil(s.Queues[i].Schedule.Days)
+		if s.Queues[i].Schedule.OnComplete == "" {
+			s.Queues[i].Schedule.OnComplete = "none"
+		}
 	}
+	// Lists go to the UI as JSON; nil would become null and crash code that
+	// calls .map / .join / .includes on them.
+	s.InterceptTypes = nonNil(s.InterceptTypes)
+	s.SkipSites = nonNil(s.SkipSites)
+	s.Categories = nonNil(s.Categories)
+	for i := range s.Categories {
+		s.Categories[i].Extensions = nonNil(s.Categories[i].Extensions)
+	}
+	s.SMB = nonNil(s.SMB)
+}
+
+func nonNil[T any](v []T) []T {
+	if v == nil {
+		return []T{}
+	}
+	return v
 }
 
 func (st *Store) Get() Settings {
