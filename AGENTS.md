@@ -20,7 +20,9 @@ browser extension. See `README.md` for user-facing features.
   one TCP connection and kill acceleration.
 - **Bridge security:** the local API listens only on `127.0.0.1`, requires the
   `X-CDM-Token` header, and answers CORS only for extension origins. Don't weaken this.
-- Pure-Go dependencies only (no cgo); builds must work without a C toolchain.
+- Pure-Go dependencies only; Windows builds must work without a C toolchain
+  (`CGO_ENABLED=0`). macOS already needs cgo for Wails itself, so small native
+  Objective-C (like `internal/tray/tray_darwin.m`) is fine there.
 
 ## Layout
 
@@ -35,11 +37,14 @@ internal/engine              Manager (queues, scheduler, limits, persistence, ev
   util.go                    file names, kind detection, FindTool (ffmpeg/yt-dlp lookup)
 internal/storage             FS abstraction: local / UNC / smb:// (go-smb2)
 internal/grabber             Site spider (files mode + mirror mode)
+internal/tray                Tray icon: fyne.io/systray on Windows, native NSStatusItem on macOS
 internal/bridge              Local HTTP API for the browser extension
 frontend/src                 React UI: App.tsx (main window), dialogs, Options, Scheduler, Grabber
 frontend/wailsjs             GENERATED Wails bindings — don't hand-edit; `wails build/dev` regenerates
 extension/chromium           MV3 extension (Chrome/Edge/Brave/Opera + Firefox via the same manifest)
-tools/genicons               Draws build/appicon.png and the extension icons
+tools/genicons               Draws build/appicon.png, the extension icons and the tray icons
+docs/screenshots             README screenshots (window-only captures; never the Options → Browser tab, it shows the token)
+.github/workflows/build.yml  CI: Windows + macOS apps, extension zip; `v*` tags publish a release
 ```
 
 ## Data flow
@@ -80,6 +85,11 @@ No cgo, so `-race` is unavailable on machines without gcc; run tests without it.
 - UI follows the IDM look: toolbar, category tree, sortable list, modal dialogs.
   Colors are CSS tokens in `style.css` with light and dark variants; use them.
 - Keep user-facing strings plain English (no i18n system yet).
+- Every list in `config.Settings` must reach the UI as `[]`, never `null`
+  (`normalize` enforces it; the Scheduler crashed on `"days": null`).
+- Releasing: bump the version in `app.go` (`Version`), `wails.json`
+  (`info.productVersion`) and `extension/chromium/manifest.json` together, then
+  push a `vX.Y.Z` tag. CI fails if they disagree.
 - Error messages to the user should say what failed and what to do, not raw Go errors
   where avoidable.
 
@@ -92,5 +102,6 @@ otherwise the exe is locked.
 
 ## Known gaps / roadmap
 
-Tray icon (needs Wails v3), multilingual UI, Kerberos SSO, link rewriting in mirror
-mode, optional local proxy capture mode, macOS build not yet verified on real hardware.
+Multilingual UI, Kerberos SSO, link rewriting in mirror
+mode, optional local proxy capture mode, code signing / notarization, Windows tray
+not yet exercised on real hardware (CI compiles it).

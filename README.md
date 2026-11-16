@@ -1,149 +1,184 @@
 # Crazy Download Manager
 
-An open-source, cross-platform (Windows and macOS) download accelerator with an
-Internet Download Manager–style interface, written in **Go 1.27** with a
-**Wails v2 + React** GUI.
+[![Build](https://github.com/mroplus/CrazyDownloadManager/actions/workflows/build.yml/badge.svg)](https://github.com/mroplus/CrazyDownloadManager/actions/workflows/build.yml)
 
-* Multi-connection downloads with **dynamic segmentation** over HTTP, HTTPS, FTP and FTPS
-* **Streams through ffmpeg**: HLS (`.m3u8`), DASH (`.mpd`), **MMS** (`mms://`, `mmsh://`, `mmst://`), RTMP, RTSP, SRT
-* Video pages (YouTube, Vimeo, …) through **yt-dlp**
-* Save straight to **SMB shares** (`smb://nas/share/dir`), UNC paths, or mounted volumes
-* Browser extension for Chrome, Edge, Brave, Opera and Firefox: download takeover, a "Download this video" panel, and "Download all links"
-* **Site grabber**: crawl a site for files of chosen types, or mirror it for offline browsing
-* Queues, a scheduler, speed limiter, categories, resume after crash or reboot, clipboard monitor, IDM-compatible command line
+A free, open-source download accelerator for **Windows and macOS**, with a
+classic download-manager interface. Written in Go with a Wails + React UI, plus
+a browser extension for Chrome, Edge, Brave, Opera and Firefox.
 
-## Feature parity with IDM
+![Main window](docs/screenshots/main.png)
 
-| IDM feature (features2.html) | Crazy Download Manager |
+## Features
+
+- **Faster downloads**: up to 32 connections per file, with dynamic
+  segmentation. A connection that finishes early takes over half of the
+  largest piece still downloading.
+- **Resume anywhere**: progress is saved every few seconds, so downloads
+  survive a crash, a reboot or a dropped connection.
+- **Protocols**: HTTP, HTTPS and FTP/FTPS natively. HLS, DASH, MMS, RTMP, RTSP
+  and SRT through ffmpeg. YouTube, Vimeo and other video sites through yt-dlp.
+- **Browser integration**: catches downloads from the browser, adds a
+  "Download this video" button on pages with video, and can download all links
+  on a page.
+- **Queues and scheduler**: several queues, start and stop times, weekdays,
+  and exit, sleep or shut down when a queue finishes.
+- **Site grabber**: crawl a site for files of chosen types, or mirror it for
+  offline reading.
+- **Speed limits**: a global limit, plus per-download limits that can change
+  while the download runs.
+- **Save anywhere**: local folders, UNC paths, or straight to SMB shares
+  (`smb://nas/share/folder`).
+- **Tray and menu bar**: closing the window keeps downloads running in the
+  Windows notification area or the macOS menu bar.
+- **More**: automatic categories by file type, proxy support (HTTP, HTTPS,
+  SOCKS5), Basic/NTLM/Negotiate authentication, clipboard monitoring, drag and
+  drop, a virus-scan hook, light and dark themes, and an IDM-compatible
+  command line.
+
+| Download progress | Scheduler |
 |---|---|
-| Download acceleration, dynamic file segmentation, connection reuse | ✅ `internal/engine/segmented.go`: each new or idle connection takes the second half of the largest remaining range. Default 8 connections, up to 32 |
-| One-click download from browsers | ✅ MV3 extension: Chrome, Edge, Brave, Opera, Vivaldi, Firefox 121+ |
-| "Download with …" context menu | ✅ Link, image, video and audio context menu |
-| HTTP, HTTPS, FTP, MMS | ✅ HTTP/HTTPS/FTP/FTPS natively. MMS, plus HLS/DASH/RTMP/RTSP, via ffmpeg |
-| Resume / error recovery | ✅ Per-range progress saved every 3 s and at shutdown; retries; per-connection stall watchdog |
-| Download All (links on page) | ✅ Context menu and popup button, with an extension filter dialog |
-| Scheduler, queues, shutdown when done | ✅ Multiple queues, start and stop times, weekdays, exit/sleep/shut down when done |
-| Site spider / grabber | ✅ File-type mode and whole-site mirror mode, depth, host and path limits, exclude patterns |
-| Video grabber ("Download this video" panel) | ✅ Media sniffing in the extension, in-page panel, popup list, yt-dlp for video sites |
-| Download limits / speed limiter | ✅ Global limit and per-download limit (live, from the progress window) |
-| Automatic categories | ✅ By extension, each category with its own folder |
-| Proxy servers | ✅ System, none, or manual HTTP/HTTPS/SOCKS5 with authentication |
-| Basic, NTLM, Negotiate authentication | ✅ via `go-ntlmssp` (Kerberos SSO not implemented) |
-| Drag and drop links | ✅ Drop links from a browser onto the window |
-| Antivirus check on completion | ✅ Any scanner command (`%f` = file path) |
-| Dark theme / customizable UI | ✅ Light, dark, or follow the system |
-| Command line | ✅ `CrazyDownloadManager /d URL /p dir /f name /n /a /s` (IDM's switches) |
-| Clipboard monitoring | ✅ Optional |
-| Advanced browser integration (catch downloads from *any* application) | ⚠️ Not implemented. Capture is userland only: browser extension, clipboard, drag and drop, command line |
-| Multilingual UI | ⏳ Not yet (strings are in English) |
-| Tray icon | ⏳ Not yet (Wails v2 has no tray API; planned with Wails v3) |
+| ![Progress window with eight connections](docs/screenshots/progress.png) | ![Scheduler](docs/screenshots/scheduler.png) |
 
-## Architecture
+![Options](docs/screenshots/options.png)
 
-```
-┌────────────── Browser ──────────────┐        ┌────────── CrazyDownloadManager.exe / .app ──────────┐
-│ extension/chromium (MV3)            │  HTTP  │ internal/bridge   127.0.0.1:47100 + X-CDM-Token     │
-│  • downloads.onDeterminingFilename ─┼───────▶│ app.go            Wails bindings, CLI, clipboard    │
-│  • webRequest media sniffing        │        │ internal/engine   Manager: queues, scheduler,       │
-│  • context menus / Download all     │        │                   speed limits, persistence         │
-│  • in-page video panel              │        │   ├ segmented.go  dynamic segmentation (HTTP, FTP)  │
-└─────────────────────────────────────┘        │   ├ stream.go     ffmpeg (HLS/DASH/MMS/RTMP/RTSP)   │
-                                               │   │               yt-dlp (video pages), conversions │
-┌──── frontend (React + TS) ──────────┐ events │   └ source_*.go   HTTP(S)+NTLM+proxy, FTP/FTPS      │
-│ IDM-style toolbar, categories, list,│◀──────▶│ internal/storage  local / UNC / smb:// (SMB2/3)     │
-│ progress window, options, scheduler,│        │ internal/grabber  site spider                       │
-│ site grabber                        │        │ internal/config   settings.json                     │
-└─────────────────────────────────────┘        └─────────────────────────────────────────────────────┘
-```
+## Download
 
-Some design notes:
+Get the latest build from the
+[Releases page](https://github.com/mroplus/CrazyDownloadManager/releases):
 
-* **HTTP/2 is disabled on purpose.** It multiplexes every request to one TCP
-  connection, which defeats multi-connection acceleration.
-* **Part files are sparse on Windows** (`FSCTL_SET_SPARSE`). Without that, NTFS
-  zero-fills the gap when a segment writes far into the file. APFS creates
-  sparse files on its own.
-* **The connection count adapts.** If a server caps connections per client, the
-  extra connections hand their ranges back instead of failing the download.
-* **The default User-Agent is honest** (`CrazyDownloadManager/x`). Some CDNs
-  drop connections that claim to be Chrome but have Go's TLS fingerprint. When
-  a browser-supplied UA is refused this way, the engine retries once with its
-  own UA.
-* **Stopping a live stream finalises the file.** ffmpeg gets a clean `q`, so the
-  recording stays playable.
-* **SMB:** `smb://` destinations write directly over SMB2/3 using
-  [`go-smb2`](https://github.com/hirochachacha/go-smb2), with credentials from
-  *Options → Network shares*. ffmpeg and yt-dlp output goes to a local temp
-  folder first and is uploaded when done.
+| File | For |
+|---|---|
+| `…-windows-amd64-setup.exe` | Windows installer |
+| `…-windows-amd64.zip` | Portable Windows build, with the browser extension |
+| `…-macos-universal.dmg` | macOS (Apple Silicon and Intel) |
+| `…-macos-universal.zip` | macOS app, with the browser extension |
+| `…-extension-chromium.zip` | Browser extension only |
 
-Data lives in `%APPDATA%\CrazyDownloadManager` (Windows) or
-`~/Library/Application Support/CrazyDownloadManager` (macOS).
+The builds are not code-signed yet:
 
-## Building
+- **Windows**: SmartScreen may say "Windows protected your PC". Click
+  *More info* → *Run anyway*.
+- **macOS**: the first time, right-click the app and choose *Open*. If macOS
+  says the app is damaged, run `xattr -dr com.apple.quarantine "/Applications/CrazyDownloadManager.app"`.
 
-Requirements: Go 1.27 (any Go ≥ 1.21 fetches it automatically, because `go.mod`
-pins `toolchain go1.27.0`), Node 20+, and the Wails CLI:
+Optional tools, detected automatically when they are on your `PATH` or next
+to the app:
 
-```sh
-go install github.com/wailsapp/wails/v2/cmd/wails@latest
-wails doctor            # checks WebView2 (Windows) / Xcode CLT (macOS)
+- **ffmpeg**, for streams and conversions: `winget install ffmpeg` / `brew install ffmpeg`
+- **yt-dlp**, for video sites: `winget install yt-dlp` / `brew install yt-dlp`
 
-wails dev               # live-reload development
-wails build             # → build/bin/CrazyDownloadManager(.exe|.app)
-wails build -nsis       # Windows installer (needs NSIS)
-wails build -platform darwin/universal   # on a Mac: Intel + Apple Silicon
-```
+## Browser extension
 
-Optional runtime tools (auto-detected on `PATH`, next to the executable, in
-`bin/`, or Homebrew paths):
+1. Unzip the extension (it is also inside the Windows and macOS zips).
+2. Open `chrome://extensions` (or `edge://extensions`, `brave://extensions`,
+   `opera://extensions`) and turn on **Developer mode**.
+3. Click **Load unpacked** and pick the folder that contains `manifest.json`.
+4. In the app, open **Options → Browser** and copy the pairing token. Paste it
+   into the extension's options and click **Test connection**.
 
-* **ffmpeg**: streams (HLS/DASH/MMS/RTMP/RTSP) and conversions. `winget install ffmpeg` / `brew install ffmpeg`
-* **yt-dlp**: video sites. `winget install yt-dlp` / `brew install yt-dlp`
+Firefox: open `about:debugging` → *This Firefox* → *Load Temporary Add-on*
+and pick `manifest.json`. Then click **Allow access to all sites** in the
+extension's options, because Firefox doesn't grant site access on install.
 
-Tests (local HTTP servers; the HLS test generates a stream with ffmpeg, if installed):
+Using it:
 
-```sh
-go test ./internal/...
-```
-
-To regenerate icons: `go run ./tools/genicons`
-
-## Installing the browser extension
-
-1. Open `chrome://extensions` (or `edge://extensions`, `brave://extensions`)
-   and turn on **Developer mode**.
-2. Click **Load unpacked** and choose `extension/chromium`.
-3. In the extension options, paste the token from **Options → Browser** in the
-   app and click **Test connection**.
-
-Firefox: `about:debugging` → *This Firefox* → *Load Temporary Add-on* →
-`extension/chromium/manifest.json`. For permanent install, sign it through
-addons.mozilla.org.
-
-Usage:
-* Clicking a download link whose type is in *Options → File types* sends it to
-  the app. Hold **Alt** while clicking to let the browser handle it.
-* Right-click → **Download with Crazy DM** / **Download all links with Crazy DM**.
-* Play a video, then use the floating **Download this video** button or the
+- Clicking a link to a file type listed in *Options → File types* sends it to
+  the app. Hold **Alt** while clicking to let the browser download it instead.
+- Right-click a link → **Download with Crazy DM**, or right-click the page →
+  **Download all links with Crazy DM**.
+- Play a video, then use the **Download this video** button on the page or the
   toolbar popup.
 
-**Bridge security:** the app listens only on `127.0.0.1`. Every request needs
-the pairing token, and requests from web-page origins get `403 Forbidden`.
+The app only listens on `127.0.0.1`, every request needs the pairing token, and
+requests from web pages are refused.
+
+## Tray and menu bar
+
+When **Options → General → Keep running … when the window is closed** is on
+(the default), closing the window hides it and downloads keep running:
+
+- **Windows**: the icon sits in the notification area. Left-click shows the
+  window. Right-click opens a menu with the current status, *Resume all*,
+  *Pause all* and *Exit*.
+- **macOS**: the icon sits in the menu bar with the same menu. The Dock icon
+  also brings the window back, and ⌘Q quits. Changing this option on macOS
+  takes effect after a restart.
 
 ## Command line
 
 ```
-CrazyDownloadManager /d URL [/p local\path] [/f filename] [/n] [/a] [/s]
-  /d URL   download URL (a bare URL works too)
-  /p dir   save to this folder (local, UNC or smb://)
-  /f name  save as this file name
-  /n       silent: no dialog, start immediately
-  /a       add to the main queue, don't start
-  /s       start the main queue
+CrazyDownloadManager /d URL [/p folder] [/f filename] [/n] [/a] [/s]
+  /d URL      download URL (a bare URL works too)
+  /p folder   save to this folder (local, UNC or smb://)
+  /f name     save under this file name
+  /n          silent: no dialog, start right away
+  /a          add to the main queue without starting
+  /s          start the main queue
 ```
 
-If the app is already running, the arguments are handed to that instance.
+If the app is already running, the arguments go to that instance.
+
+## Building from source
+
+You need Go 1.27 (any Go 1.21 or newer downloads it automatically because
+`go.mod` pins the toolchain), Node 20 or newer, and the Wails CLI at the
+version in `go.mod`:
+
+```sh
+go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1
+wails doctor                               # checks WebView2 (Windows) or Xcode tools (macOS)
+
+wails dev                                  # live reload
+wails build                                # build/bin/CrazyDownloadManager(.exe|.app)
+wails build -nsis                          # Windows installer (needs NSIS)
+wails build -platform darwin/universal     # macOS, Apple Silicon + Intel
+
+go test ./internal/...
+go run ./tools/genicons                    # regenerate app, extension and tray icons
+```
+
+[GitHub Actions](.github/workflows/build.yml) builds the Windows and macOS
+apps and the extension on every push. Pushing a `v*` tag that matches the
+version in `app.go`, `wails.json` and the extension manifest publishes a
+release.
+
+## How it works
+
+```
+Browser extension (MV3) ──HTTP, 127.0.0.1 + token──▶ internal/bridge
+                                                          │
+React UI ◀──Wails events / bindings──▶ app.go ────────────┤
+                                                          ▼
+                                         internal/engine  Manager: queues, scheduler,
+                                           segmented.go   limits, persistence
+                                           source_*.go    HTTP(S), FTP(S)
+                                           stream.go      ffmpeg, yt-dlp
+                                         internal/storage local, UNC, smb://
+                                         internal/grabber site spider
+                                         internal/tray    Windows tray, macOS menu bar
+```
+
+Some design choices:
+
+- **HTTP/2 is disabled**, because it would put every connection onto one TCP
+  stream and remove the speed-up.
+- **The User-Agent is honest** (`CrazyDownloadManager/x`). Some CDNs drop
+  connections that claim to be Chrome but have Go's TLS fingerprint.
+- **The number of connections adapts**: if a server limits connections per
+  client, the extra connections hand their ranges back instead of failing.
+- **Part files are sparse** on Windows, so a connection writing near the end of
+  a large file doesn't force the disk to zero-fill the gap first.
+- **Stopping a live stream keeps the recording playable**: ffmpeg is told to
+  finish the file properly.
+
+Settings and the download list are stored in `%APPDATA%\CrazyDownloadManager`
+on Windows and `~/Library/Application Support/CrazyDownloadManager` on macOS.
+
+## Roadmap
+
+A multilingual UI, Kerberos single sign-on, link rewriting in mirror mode, and
+signed builds.
 
 ## License
 
-MIT
+[MIT](LICENSE)
