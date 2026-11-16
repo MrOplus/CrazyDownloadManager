@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -20,6 +22,7 @@ import (
 	"crazydownloadmanager/internal/grabber"
 	"crazydownloadmanager/internal/model"
 	"crazydownloadmanager/internal/storage"
+	"crazydownloadmanager/internal/tray"
 )
 
 const Version = "0.1.0"
@@ -38,6 +41,9 @@ type App struct {
 
 	grabMu     sync.Mutex
 	grabCancel context.CancelFunc
+
+	trayOn   atomic.Bool
+	quitting atomic.Bool
 
 	ready chan struct{}
 }
@@ -73,7 +79,7 @@ func (a *App) emit(name string, data any) {
 func (a *App) afterQueue(action string) {
 	switch action {
 	case "exit":
-		go func() { time.Sleep(2 * time.Second); runtime.Quit(a.ctx) }()
+		go func() { time.Sleep(2 * time.Second); a.quit() }()
 	case "shutdown":
 		a.mgr.Shutdown(10 * time.Second)
 		_ = systemAction("shutdown")
@@ -93,6 +99,7 @@ func (a *App) startup(ctx context.Context) {
 	go a.mgr.Run(runCtx)
 	a.restartBridge()
 	go a.clipboardLoop(runCtx)
+	a.startTray(runCtx)
 	close(a.ready)
 }
 
@@ -113,13 +120,103 @@ func (a *App) shutdown(ctx context.Context) {
 	if a.mgr != nil {
 		a.mgr.Shutdown(5 * time.Second)
 	}
+	tray.Stop()
 }
 
 func (a *App) onSecondInstance(data options.SecondInstanceData) {
 	<-a.ready
+	a.showWindow()
+	a.handleArgs(data.Args)
+}
+
+// ---------------------------------------------------------------- window and tray
+
+// showWindow brings the main window back from the tray, the Dock or a minimised state.
+func (a *App) showWindow() {
+	runtime.Show(a.ctx) // macOS: unhide the app; Windows: show the window
 	runtime.WindowUnminimise(a.ctx)
 	runtime.WindowShow(a.ctx)
-	a.handleArgs(data.Args)
+}
+
+// quit exits for real, even when closing the window would only hide it.
+// Shutdown still runs, so downloads are paused and state is saved.
+func (a *App) quit() {
+	a.quitting.Store(true)
+	runtime.Quit(a.ctx)
+}
+
+// beforeClose is Wails' OnBeforeClose. On Windows the close button hides the
+// window to the tray when "close to tray" is on. On macOS the close button
+// and Cmd+Q both arrive here and can't be told apart, so macOS uses Wails'
+// HideWindowOnClose instead (see main.go) and this never blocks quitting.
+func (a *App) beforeClose(ctx context.Context) (prevent bool) {
+	if goos() == "darwin" || a.quitting.Load() || !a.trayOn.Load() || !a.settings.Get().CloseToTray {
+		return false
+	}
+	runtime.WindowHide(ctx)
+	return true
+}
+
+func (a *App) startTray(ctx context.Context) {
+	ok := tray.Start(tray.Menu{
+		Show:      a.showWindow,
+		ResumeAll: a.mgr.ResumeAll,
+		PauseAll:  a.mgr.PauseAll,
+		Quit:      a.quit,
+	})
+	a.trayOn.Store(ok)
+	if !ok {
+		return
+	}
+	go func() {
+		t := time.NewTicker(2 * time.Second)
+		defer t.Stop()
+		last := ""
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+			if s := trayStatus(a.mgr.List()); s != last {
+				tray.SetStatus(s)
+				last = s
+			}
+		}
+	}()
+}
+
+// trayStatus is the one-line summary shown in the tray tooltip and menu.
+func trayStatus(list []model.Download) string {
+	n, queued := 0, 0
+	var speed int64
+	for _, d := range list {
+		switch {
+		case d.Status.Active():
+			n++
+			speed += d.Speed
+		case d.Status == model.StatusQueued:
+			queued++
+		}
+	}
+	switch {
+	case n > 0:
+		return fmt.Sprintf("%d active · %s", n, formatSpeed(speed))
+	case queued > 0:
+		return fmt.Sprintf("%d queued", queued)
+	}
+	return "No active downloads"
+}
+
+func formatSpeed(bps int64) string {
+	const k = 1024
+	switch {
+	case bps >= k*k:
+		return fmt.Sprintf("%.1f MB/s", float64(bps)/(k*k))
+	case bps >= k:
+		return fmt.Sprintf("%.0f KB/s", float64(bps)/k)
+	}
+	return fmt.Sprintf("%d B/s", bps)
 }
 
 // ---------------------------------------------------------------- command line
@@ -254,8 +351,7 @@ func (a *App) BridgeAdd(req bridge.AddRequest) error {
 		}
 		return nil
 	}
-	runtime.WindowUnminimise(a.ctx)
-	runtime.WindowShow(a.ctx)
+	a.showWindow()
 	if req.Batch {
 		runtime.EventsEmit(a.ctx, "ui:batch", req)
 	} else {

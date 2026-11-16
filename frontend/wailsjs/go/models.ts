@@ -194,6 +194,7 @@ export namespace config {
 	    showAddDialog: boolean;
 	    showCompleteDialog: boolean;
 	    clipboardMonitor: boolean;
+	    closeToTray: boolean;
 	    browserIntercept: boolean;
 	    interceptTypes: string[];
 	    skipSites: string[];
@@ -224,6 +225,7 @@ export namespace config {
 	        this.showAddDialog = source["showAddDialog"];
 	        this.showCompleteDialog = source["showCompleteDialog"];
 	        this.clipboardMonitor = source["clipboardMonitor"];
+	        this.closeToTray = source["closeToTray"];
 	        this.browserIntercept = source["browserIntercept"];
 	        this.interceptTypes = source["interceptTypes"];
 	        this.skipSites = source["skipSites"];

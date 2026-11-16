@@ -16,6 +16,11 @@ var assets embed.FS
 
 func main() {
 	app := NewApp()
+	// macOS can't tell the close button from Cmd+Q in OnBeforeClose, so the
+	// close button's behaviour is fixed at launch there (red button hides the
+	// app, Cmd+Q quits, the Dock icon brings it back). Windows reads the
+	// setting live in beforeClose.
+	hideOnClose := goos() == "darwin" && app.settings.Get().CloseToTray
 
 	err := wails.Run(&options.App{
 		Title:     "Crazy Download Manager",
@@ -26,10 +31,12 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		BackgroundColour: &options.RGBA{R: 243, G: 245, B: 248, A: 1},
-		OnStartup:        app.startup,
-		OnDomReady:       app.domReady,
-		OnShutdown:       app.shutdown,
+		BackgroundColour:  &options.RGBA{R: 243, G: 245, B: 248, A: 1},
+		OnStartup:         app.startup,
+		OnDomReady:        app.domReady,
+		OnShutdown:        app.shutdown,
+		OnBeforeClose:     app.beforeClose,
+		HideWindowOnClose: hideOnClose,
 		// A second launch (e.g. `CrazyDownloadManager /d URL`) hands its
 		// arguments to the running instance instead of opening a new window.
 		SingleInstanceLock: &options.SingleInstanceLock{

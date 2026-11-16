@@ -5,6 +5,7 @@ go 1.27
 toolchain go1.27.0
 
 require (
+	fyne.io/systray v1.12.2
 	github.com/Azure/go-ntlmssp v0.1.1
 	github.com/hirochachacha/go-smb2 v1.1.0
 	github.com/jlaffaye/ftp v0.2.4

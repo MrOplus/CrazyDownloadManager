@@ -38,6 +38,9 @@ export function OptionsDialog({ settings, info, initialTab, onClose, onSaved, on
           </Field>
           <label className="check"><input type="checkbox" checked={s.showAddDialog} onChange={e => set('showAddDialog', e.target.checked)} /> Show "Download File Info" dialog for browser downloads</label>
           <label className="check"><input type="checkbox" checked={s.showCompleteDialog} onChange={e => set('showCompleteDialog', e.target.checked)} /> Show "Download complete" dialog</label>
+          <label className="check"><input type="checkbox" checked={s.closeToTray} onChange={e => set('closeToTray', e.target.checked)} /> {info.os === 'darwin'
+            ? <>Keep running in the menu bar when the window is closed <span className="muted small">(takes effect after restart; ⌘Q quits)</span></>
+            : <>Keep running in the notification area when the window is closed</>}</label>
           <label className="check"><input type="checkbox" checked={s.clipboardMonitor} onChange={e => set('clipboardMonitor', e.target.checked)} /> Watch the clipboard for download links</label>
           <Field label="Virus scanner" hint={<>Runs after each download. <code>%f</code> is replaced by the file path, e.g. <code>"C:\Program Files\Windows Defender\MpCmdRun.exe" -Scan -ScanType 3 -File "%f"</code></>}>
             <div className="dir-input">

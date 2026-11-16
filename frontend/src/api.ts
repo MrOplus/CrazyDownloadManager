@@ -37,7 +37,7 @@ export interface Queue { id: string; name: string; maxConcurrent: number; schedu
 export interface Settings {
   defaultDir: string; maxConnections: number; globalSpeedLimit: number; maxRetries: number;
   retryDelaySec: number; timeoutSec: number; proxy: string; userAgent: string; bridgePort: number;
-  bridgeToken: string; showAddDialog: boolean; showCompleteDialog: boolean; clipboardMonitor: boolean;
+  bridgeToken: string; showAddDialog: boolean; showCompleteDialog: boolean; clipboardMonitor: boolean; closeToTray: boolean;
   browserIntercept: boolean; interceptTypes: string[]; skipSites: string[]; ffmpegPath: string;
   ytDlpPath: string; antivirusCmd: string; theme: 'system' | 'light' | 'dark';
   categories: Category[]; queues: Queue[]; smb: SMBCredential[];
