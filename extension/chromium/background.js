@@ -17,14 +17,41 @@ let appOnline = false;
 const bypass = new Map();       // url -> expiry (Alt+click, or app refused)
 const media = new Map();        // tabId -> Map(url -> item)
 
-// ------------------------------------------------------------ settings
+// ------------------------------------------------------------ settings and state
+//
+// MV3 service workers are stopped after ~30 s idle and restarted by the next
+// event, so everything above starts empty again. The token must be loaded
+// before the first request (otherwise a download that wakes the worker is
+// sent with an empty token and stays in the browser), and the media list is
+// kept in storage.session so the popup and panel survive a restart.
 
 async function loadCfg() {
   cfg = { ...DEFAULTS, ...(await chrome.storage.local.get(Object.keys(DEFAULTS))) };
 }
-chrome.storage.onChanged.addListener(() => loadCfg().then(refreshAppCfg));
+
+async function restoreMedia() {
+  try {
+    const { media: saved } = await chrome.storage.session.get('media');
+    for (const [tabId, items] of Object.entries(saved || {})) media.set(+tabId, new Map(items));
+  } catch { }
+}
+
+let saveTimer = null;
+function saveMedia() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    const out = {};
+    for (const [tabId, list] of media) out[tabId] = [...list];
+    chrome.storage.session.set({ media: out }).catch(() => { });
+  }, 300);
+}
+
+const ready = Promise.all([loadCfg(), restoreMedia()]);
+
+chrome.storage.onChanged.addListener((_, area) => { if (area === 'local') loadCfg().then(refreshAppCfg); });
 
 async function api(path, body) {
+  await ready;
   const res = await fetch(`http://127.0.0.1:${cfg.port}${path}`, {
     method: body ? 'POST' : 'GET',
     headers: { 'Content-Type': 'application/json', 'X-CDM-Token': cfg.token },
@@ -126,7 +153,10 @@ function buildMenus() {
     chrome.contextMenus.create({ id: 'cdm-page-video', title: 'Download video from this page (yt-dlp)', contexts: ['page', 'video'] });
   });
 }
-chrome.runtime.onInstalled.addListener(() => { buildMenus(); chrome.runtime.openOptionsPage(); });
+chrome.runtime.onInstalled.addListener(details => {
+  buildMenus();
+  if (details.reason === 'install') chrome.runtime.openOptionsPage(); // not on every update
+});
 chrome.runtime.onStartup.addListener(buildMenus);
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -176,7 +206,13 @@ const STREAM_TYPES = /mpegurl|dash\+xml/i;
 const MEDIA_TYPES = /^(video|audio)\//i;
 const SEGMENT_EXT = /\.(ts|m4s|aac|vtt|webvtt|key|cmfv|cmfa)(\?|$)/i;
 
-chrome.webRequest.onHeadersReceived.addListener(details => {
+// The listeners below must wait for `ready`: on a cold start the media list
+// is still being restored, and touching it earlier would either be undone by
+// the restore or bring back the previous page's videos.
+chrome.webRequest.onHeadersReceived.addListener(details => { ready.then(() => sniff(details)); },
+  { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other', 'object'] }, ['responseHeaders']);
+
+function sniff(details) {
   if (details.tabId < 0 || details.statusCode >= 400) return;
   const h = Object.fromEntries((details.responseHeaders || []).map(x => [x.name.toLowerCase(), x.value || '']));
   const type = (h['content-type'] || '').split(';')[0].trim();
@@ -200,17 +236,19 @@ chrome.webRequest.onHeadersReceived.addListener(details => {
   if (list.has(key)) return;
   list.set(key, { url, kind, mime: type, size, found: Date.now() });
   media.set(details.tabId, list);
+  saveMedia();
   chrome.action.setBadgeText({ tabId: details.tabId, text: String(list.size) });
   if (cfg.videoPanel) chrome.tabs.sendMessage(details.tabId, { type: 'cdm-media', count: list.size }).catch(() => { });
-}, { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other', 'object'] }, ['responseHeaders']);
+}
 
 chrome.tabs.onUpdated.addListener((tabId, change) => {
-  if (change.status === 'loading' && change.url) {
-    media.delete(tabId);
-    chrome.action.setBadgeText({ tabId, text: '' });
-  }
+  if (change.status !== 'loading' || !change.url) return;
+  ready.then(() => {
+    if (media.delete(tabId)) saveMedia();
+    chrome.action.setBadgeText({ tabId, text: '' }).catch(() => { });
+  });
 });
-chrome.tabs.onRemoved.addListener(tabId => media.delete(tabId));
+chrome.tabs.onRemoved.addListener(tabId => { ready.then(() => { if (media.delete(tabId)) saveMedia(); }); });
 
 function mediaList(tabId) {
   return [...(media.get(tabId)?.values() || [])].sort((a, b) => (b.kind === 'stream') - (a.kind === 'stream') || b.size - a.size);
@@ -226,6 +264,7 @@ async function downloadMedia(tab, item) {
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   (async () => {
+    await ready;
     switch (msg.type) {
       case 'cdm-bypass':
         bypass.set(msg.url, Date.now() + 15000);
@@ -235,6 +274,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         return reply({ online, cfg, appCfg, mediaHost: msg.tabUrl ? isMediaHost(msg.tabUrl) : false, media: msg.tabId != null ? mediaList(msg.tabId) : [] });
       }
       case 'cdm-test': {
+        await loadCfg(); // the options page has just saved new values
         try { await api('/api/ping'); return reply({ ok: true }); } catch (e) { return reply({ ok: false, error: e.message }); }
       }
       case 'cdm-download-media': {
@@ -242,6 +282,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         const list = mediaList(tab.id);
         try {
           if (msg.pageVideo) await send([{ url: tab.url, kind: 'media', referer: tab.url }], { page: tab.title });
+          else if (!list[msg.index ?? 0]) throw new Error('that video is no longer listed, reload the page');
           else await downloadMedia(tab, list[msg.index ?? 0]);
           return reply({ ok: true });
         } catch (e) { return reply({ ok: false, error: e.message }); }
@@ -251,16 +292,22 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         return reply({ media: mediaList(tabId), mediaHost: sender.tab ? isMediaHost(sender.tab.url) : false, enabled: cfg.videoPanel });
       }
       case 'cdm-all-links': {
-        const tab = await chrome.tabs.get(msg.tabId);
-        const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collectLinks, args: [false] });
-        try { await send(result.map(l => ({ url: l.url, referer: tab.url })), { batch: true, page: tab.title }); reply({ ok: true }); }
-        catch (e) { reply({ ok: false, error: e.message }); }
+        try {
+          const tab = await chrome.tabs.get(msg.tabId);
+          // Throws on pages extensions can't script (browser pages, the web store).
+          const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collectLinks, args: [false] });
+          if (!result || !result.length) return reply({ ok: false, error: 'No links found on this page' });
+          await send(result.map(l => ({ url: l.url, referer: tab.url })), { batch: true, page: tab.title });
+          reply({ ok: true });
+        } catch (e) { reply({ ok: false, error: e.message }); }
         return;
       }
+      default:
+        reply({ ok: false, error: 'unknown message' });
     }
   })();
   return true;
 });
 
-loadCfg().then(refreshAppCfg);
+ready.then(refreshAppCfg);
 setInterval(refreshAppCfg, 60000);

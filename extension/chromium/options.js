@@ -24,10 +24,18 @@ $('save').onclick = async () => { await save(); $('result').textContent = 'Saved
 $('test').onclick = async () => {
   await save();
   $('result').textContent = 'Testing…';
-  // give the background worker a moment to reload its settings
-  setTimeout(async () => {
-    const r = await chrome.runtime.sendMessage({ type: 'cdm-test' });
-    $('result').textContent = r.ok ? '✔ Connected to Crazy Download Manager' : '✖ ' + r.error;
-    $('result').className = r.ok ? 'ok' : 'err';
-  }, 300);
+  $('result').className = '';
+  const r = await chrome.runtime.sendMessage({ type: 'cdm-test' }).catch(e => ({ ok: false, error: e.message }));
+  $('result').textContent = r && r.ok ? '✔ Connected to Crazy Download Manager' : '✖ ' + ((r && r.error) || 'no answer');
+  $('result').className = r && r.ok ? 'ok' : 'err';
 };
+
+// Firefox treats MV3 host permissions as optional and doesn't grant them at
+// install time. Without them the extension can't see downloads or media.
+const ALL = { origins: ['<all_urls>'] };
+async function checkAccess() {
+  const ok = await chrome.permissions.contains(ALL).catch(() => true);
+  $('access').hidden = ok;
+}
+$('grant').onclick = async () => { await chrome.permissions.request(ALL).catch(() => false); checkAccess(); };
+checkAccess();

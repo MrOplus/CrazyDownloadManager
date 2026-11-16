@@ -25,15 +25,15 @@ async function init() {
       b.querySelector('.l').textContent = it.label;
       b.querySelector('.s').textContent = it.sub;
       b.onclick = async () => {
-        const r = await chrome.runtime.sendMessage(it.msg);
-        b.querySelector('.l').textContent = r.ok ? '✔ Sent to Crazy DM' : '✖ ' + r.error;
+        const r = await chrome.runtime.sendMessage(it.msg).catch(e => ({ ok: false, error: e.message }));
+        b.querySelector('.l').textContent = r && r.ok ? '✔ Sent to Crazy DM' : '✖ ' + ((r && r.error) || 'no answer');
       };
       box.appendChild(b);
     });
   }
   $('all').onclick = async () => {
-    const r = await chrome.runtime.sendMessage({ type: 'cdm-all-links', tabId: tab.id });
-    if (r.ok) window.close(); else $('all').textContent = '✖ ' + r.error;
+    const r = await chrome.runtime.sendMessage({ type: 'cdm-all-links', tabId: tab.id }).catch(e => ({ ok: false, error: e.message }));
+    if (r && r.ok) window.close(); else $('all').textContent = '✖ ' + ((r && r.error) || 'no answer');
   };
 }
 

@@ -7,6 +7,10 @@
 </head>
 <body class="options">
   <h2>Crazy Download Manager</h2>
+  <div id="access" class="note" hidden>
+    The extension doesn't have access to websites yet, so it can't catch downloads or find videos.
+    <button id="grant" class="primary">Allow access to all sites</button>
+  </div>
   <p class="muted">Paste the pairing token from the app: <b>Options → Browser → Extension pairing token</b>.</p>
   <label>Token <input id="token" spellcheck="false" placeholder="32 hex characters" /></label>
   <label>Port <input id="port" type="number" min="1" max="65535" /></label>
