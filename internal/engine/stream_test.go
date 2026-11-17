@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,5 +45,33 @@ func TestHLSRecording(t *testing.T) {
 	st, err := os.Stat(filepath.Join(dir, d.FileName))
 	if err != nil || st.Size() < 10_000 {
 		t.Fatalf("output missing or tiny: %v", err)
+	}
+}
+
+func TestWriteCookieFile(t *testing.T) {
+	f, err := writeCookieFile("https://www.youtube.com/watch?v=x", "SID=abc; __Host-T=1; bad; PREF=f6=40000000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f)
+	b, err := os.ReadFile(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if lines[0] != "# Netscape HTTP Cookie File" || len(lines) != 4 {
+		t.Fatalf("unexpected file:\n%s", b)
+	}
+	for i, want := range []string{
+		".youtube.com\tTRUE\t/\tTRUE\t",
+		"www.youtube.com\tFALSE\t/\tTRUE\t",
+		".youtube.com\tTRUE\t/\tTRUE\t",
+	} {
+		if !strings.HasPrefix(lines[i+1], want) {
+			t.Errorf("line %d = %q, want prefix %q", i+1, lines[i+1], want)
+		}
+	}
+	if !strings.HasSuffix(lines[3], "\tPREF\tf6=40000000") {
+		t.Errorf("value with '=' mangled: %q", lines[3])
 	}
 }

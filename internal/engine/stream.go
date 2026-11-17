@@ -260,8 +260,21 @@ func runYtDlp(ctx context.Context, ytdlp, ffmpeg string, d model.Download, dir s
 	if d.UserAgent != "" {
 		args = append(args, "--user-agent", d.UserAgent)
 	}
+	if rt := jsRuntime(); rt != "" {
+		// YouTube hides most formats unless yt-dlp can run its JavaScript
+		// challenge. yt-dlp inherits our PATH, which may predate the runtime's
+		// install, so hand it the path explicitly.
+		args = append(args, "--js-runtimes", rt)
+	}
 	if d.Cookies != "" {
-		args = append(args, "--add-header", "Cookie:"+d.Cookies)
+		// Passing cookies as a header is deprecated in yt-dlp; give it a
+		// Netscape cookies file scoped to the page's site instead.
+		cf, err := writeCookieFile(d.URL, d.Cookies)
+		if err != nil {
+			return "", fatal(fmt.Errorf("write cookies for yt-dlp: %w", err))
+		}
+		defer os.Remove(cf)
+		args = append(args, "--cookies", cf)
 	}
 	if d.PostProcess == "mp3" || d.PostProcess == "m4a" {
 		args = append(args, "-x", "--audio-format", d.PostProcess)
@@ -331,4 +344,58 @@ func runYtDlp(ctx context.Context, ytdlp, ffmpeg string, d model.Download, dir s
 		return "", errors.New("yt-dlp finished but reported no output file")
 	}
 	return final, nil
+}
+
+// jsRuntime returns a --js-runtimes value such as "deno:/path/to/deno" for
+// the first JavaScript runtime found, or "" if none is installed.
+func jsRuntime() string {
+	for _, name := range []string{"deno", "node", "bun"} {
+		if p := FindTool("", name); p != "" {
+			return name + ":" + p
+		}
+	}
+	return ""
+}
+
+// writeCookieFile converts a Cookie header ("a=1; b=2") into a temporary
+// Netscape cookies.txt for yt-dlp, scoped to the site of pageURL
+// (www.youtube.com -> .youtube.com). The caller removes the file.
+func writeCookieFile(pageURL, header string) (string, error) {
+	u, err := url.Parse(pageURL)
+	if err != nil || u.Hostname() == "" {
+		return "", fmt.Errorf("no host in %q", pageURL)
+	}
+	host := strings.ToLower(u.Hostname())
+	for _, p := range []string{"www.", "m.", "music."} {
+		host = strings.TrimPrefix(host, p)
+	}
+	expires := time.Now().Add(24 * time.Hour).Unix()
+	var b strings.Builder
+	b.WriteString("# Netscape HTTP Cookie File\n")
+	for _, part := range strings.Split(header, ";") {
+		name, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok || name == "" || strings.ContainsAny(name+value, "\t\r\n") {
+			continue
+		}
+		// __Host- cookies must not carry a domain; scope them to the exact host.
+		domain, sub := "."+host, "TRUE"
+		if strings.HasPrefix(name, "__Host-") {
+			domain, sub = strings.ToLower(u.Hostname()), "FALSE"
+		}
+		secure := "FALSE"
+		if u.Scheme == "https" {
+			secure = "TRUE"
+		}
+		fmt.Fprintf(&b, "%s\t%s\t/\t%s\t%d\t%s\t%s\n", domain, sub, secure, expires, name, value)
+	}
+	f, err := os.CreateTemp("", "cdm-cookies-*.txt")
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.WriteString(b.String()); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), f.Close()
 }
