@@ -299,3 +299,22 @@ func TestSanitize(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestToolCandidatesGlob(t *testing.T) {
+	root := t.TempDir()
+	bin := filepath.Join(root, "pkg_1", "ffmpeg-7.1", "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(bin, "ffmpeg.exe")
+	if err := os.WriteFile(want, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := toolCandidates(filepath.Join(root, "*", "*", "bin"), "ffmpeg")
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("toolCandidates = %v, want [%s]", got, want)
+	}
+	if plain := toolCandidates(bin, "ffmpeg"); len(plain) != 2 {
+		t.Fatalf("plain dir candidates = %v", plain)
+	}
+}

@@ -148,8 +148,8 @@ func DetectKind(raw, contentType string) model.Kind {
 	return model.KindFile
 }
 
-// FindTool resolves a configured binary path or looks it up on PATH and next
-// to the executable.
+// FindTool resolves a configured binary path, or looks the tool up on PATH,
+// next to the executable, and in the usual package-manager folders.
 func FindTool(configured, name string) string {
 	if configured != "" {
 		if p, err := exec.LookPath(configured); err == nil {
@@ -166,10 +166,26 @@ func FindTool(configured, name string) string {
 			}
 		}
 	}
-	for _, c := range []string{"/opt/homebrew/bin/" + name, "/usr/local/bin/" + name} {
-		if p, err := exec.LookPath(c); err == nil {
-			return p
+	// Installers update the user's PATH, but a running process keeps the PATH
+	// it started with; also check the usual package-manager folders.
+	for _, dir := range extraToolDirs() {
+		for _, c := range toolCandidates(dir, name) {
+			if p, err := exec.LookPath(c); err == nil {
+				return p
+			}
 		}
 	}
 	return ""
+}
+
+func toolCandidates(dir, name string) []string {
+	if strings.ContainsAny(dir, "*?[") {
+		var out []string
+		for _, n := range []string{name, name + ".exe"} {
+			m, _ := filepath.Glob(filepath.Join(dir, n))
+			out = append(out, m...)
+		}
+		return out
+	}
+	return []string{filepath.Join(dir, name), filepath.Join(dir, name+".exe")}
 }
